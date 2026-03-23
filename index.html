@@ -164,6 +164,31 @@ body{background:var(--bg0);color:var(--t1);font-family:var(--sans);min-height:10
 
 @media(min-width:640px){body{max-width:520px;margin:0 auto;border-left:0.5px solid var(--border);border-right:0.5px solid var(--border)}}
 
+
+  .view-tabs{display:flex;background:var(--bg1);border-bottom:0.5px solid var(--border);flex-shrink:0}
+  .view-tab{flex:1;padding:10px;text-align:center;font-size:11px;font-family:var(--mono);letter-spacing:.1em;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+  .view-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+  .view-tab:hover{color:var(--t1)}
+  #pack-panel{display:none;flex:1;flex-direction:column;overflow:hidden}
+  #pack-panel.active{display:flex!important}
+  #viz-panel{display:none;flex:1;flex-direction:column;overflow:hidden}
+  #viz-panel.active{display:flex!important}
+  #list-panel{display:none;flex:1;flex-direction:column;overflow:hidden}
+  #list-panel.active{display:flex!important}
+  #viz-canvas-wrap{flex:1;position:relative;overflow:hidden;background:#0a0a0a;min-height:300px}
+  #viz-canvas{display:block;cursor:grab;width:100%;height:100%}
+  #viz-canvas.dragging{cursor:grabbing}
+  #viz-ctrl{display:flex;gap:6px;padding:8px 12px;background:#111;border-bottom:0.5px solid #2e2e2e;flex-shrink:0;align-items:center}
+  .vbtn{padding:4px 10px;border-radius:6px;font-size:10px;font-family:var(--mono);cursor:pointer;border:0.5px solid #3a3a3a;background:#1a1a1a;color:#a0a0a0;transition:all .15s;letter-spacing:.06em}
+  .vbtn:hover{background:#222;color:#f0f0f0}.vbtn.on{background:#1a3a5c;border-color:var(--blue);color:var(--bt)}
+  #viz-legend{display:flex;gap:8px;padding:6px 12px;background:#111;border-top:0.5px solid #2e2e2e;flex-wrap:wrap;flex-shrink:0}
+  .vleg{display:flex;align-items:center;gap:4px;font-size:9px;font-family:var(--mono);color:#555;letter-spacing:.06em}
+  .vleg-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  #viz-tooltip{position:absolute;background:#1a1a1a;border:0.5px solid #3a3a3a;border-radius:8px;padding:8px 12px;font-size:11px;color:#f0f0f0;pointer-events:none;display:none;z-index:10;min-width:170px;font-family:var(--mono)}
+  .vtt-name{font-size:12px;font-weight:600;margin-bottom:4px}
+  .vtt-row{display:flex;justify-content:space-between;gap:14px;color:#777;margin-top:2px}
+  .vtt-val{color:var(--bt)}
+
   /* FOOTER */
   .footer-brand{
     position:fixed;
@@ -249,9 +274,34 @@ body{background:var(--bg0);color:var(--t1);font-family:var(--sans);min-height:10
     <div class="stat"><div class="stat-v sm" id="sTotalW">—</div><div class="stat-l">kg (frames+enc.)</div></div>
     <div class="stat"><div class="stat-v" id="sGroups">—</div><div class="stat-l">Groups</div></div>
   </div>
-  <div class="scroll-body">
-    <div id="sourceList"></div>
-    <div class="no-r" id="noRes">No sources found.</div>
+  <div class="view-tabs">
+    <div class="view-tab active" id="tab-list" onclick="switchTab('list')">LIST</div>
+    <div class="view-tab" id="tab-viz" onclick="switchTab('viz')">VISUALIZE</div>
+    <div class="view-tab" id="tab-pack" onclick="switchTab('pack')">PACKING</div>
+  </div>
+  <div id="list-panel" class="active">
+    <div class="scroll-body">
+      <div id="sourceList"></div>
+      <div class="no-r" id="noRes">No sources found.</div>
+    </div>
+  </div>
+  <div id="pack-panel">
+    <div class="scroll-body" id="packBody"></div>
+  </div>
+  <div id="viz-panel">
+    <div id="viz-ctrl">
+      <button class="vbtn" id="vb-top" onclick="setVizView('top')">TOP</button>
+      <button class="vbtn" id="vb-front" onclick="setVizView('front')">FRONT</button>
+      <button class="vbtn" id="vb-side" onclick="setVizView('side')">SIDE</button>
+      <button class="vbtn on" id="vb-3d" onclick="setVizView('3d')">3D</button>
+      <span style="flex:1"></span>
+      <span style="font-size:9px;font-family:var(--mono);color:#444">drag · pinch · scroll</span>
+    </div>
+    <div id="viz-canvas-wrap">
+      <canvas id="viz-canvas"></canvas>
+      <div id="viz-tooltip"></div>
+    </div>
+    <div id="viz-legend"></div>
   </div>
 
 </div>
@@ -517,8 +567,8 @@ function parseGroups(lines){
 
       // Top Z: from spatial/position info — grab from "Position (X; Y; Z, m): ..." Z value
       if(/^Position \(X; Y; Z/i.test(t)){
-        const m=t.match(/:\s*[-\d.]+;\s*[-\d.]+;\s*([-\d.]+)/);
-        if(m)pc.posZ=parseFloat(m[1]);continue
+        const m=t.match(/:\s*([-\d.]+);\s*([-\d.]+);\s*([-\d.]+)/);
+        if(m){pc.posX=parseFloat(m[1]);pc.posY=parseFloat(m[2]);pc.posZ=parseFloat(m[3]);}continue
       }
 
       // Enclosure table header: "# Type Angles (°) Site (°) Top Z (m) Bottom Z (m) Panflex"
@@ -735,6 +785,319 @@ function openSourceByIdx(idx){
   }).join('');
 
   showScreen('screen-detail');
+}
+
+
+// ─── TAB SWITCH ─────────────────────────
+function switchTab(tab) {
+  ['list','viz','pack'].forEach(t=>{
+    document.getElementById(t+'-panel').classList.toggle('active', tab===t);
+    document.getElementById('tab-'+t).classList.toggle('active', tab===t);
+  });
+  if(tab==='viz') initViz();
+  if(tab==='pack') renderPacking();
+}
+
+// ─── VISUALIZER ──────────────────────────
+const GROUP_COLORS = {
+  'MAIN':'#4a9eff','CENTRE':'#ff77aa','SIDE':'#44ddff','REAR':'#ff8844',
+  'GROUND SUBS':'#4ecb71','FF':'#f0a030','OUTFILLS':'#aabb44',
+  'DELAY 1 OUT':'#c077ff','DELAY 1 IN':'#9955ff','DELAY 2':'#7744ee',
+  'FLOWN SUBS':'#22cc88'
+};
+function groupColor(name) {
+  for(const [k,v] of Object.entries(GROUP_COLORS)) {
+    if(name.toUpperCase().includes(k)) return v;
+  }
+  return '#888';
+}
+
+let vRotX=35, vRotY=20, vZoom=3.5;
+let vDragging=false, vLastX=0, vLastY=0;
+let vHovered=null, vInitialized=false;
+let vSources=[];
+
+function initViz() {
+  if(!project || !project.groups) return;
+  if(!vInitialized) { document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on')); const b3d=document.getElementById('vb-3d'); if(b3d) b3d.classList.add('on'); }
+  const canvas = document.getElementById('viz-canvas');
+  const wrap = document.getElementById('viz-canvas-wrap');
+  canvas.width = wrap.offsetWidth || 360;
+  canvas.height = Math.max(wrap.offsetHeight, 300) || 300;
+
+  // Build source list from parsed project
+  vSources = [];
+  for(const g of project.groups) {
+    for(const s of g.sources) {
+      const pc = s.physConfig;
+      if(pc.posX==null && pc.posY==null && pc.posZ==null) continue;
+      vSources.push({
+        name: s.name,
+        group: g.name,
+        x: pc.posX||0,
+        y: pc.posY||0,
+        z: pc.posZ||0,
+        az: pc.azimuth||0,
+        w: pc.totalWeightFull||0,
+        encCount: s.enclosures.length,
+        color: groupColor(g.name)
+      });
+    }
+  }
+
+  // Build legend
+  const legend = document.getElementById('viz-legend');
+  const seen = {};
+  legend.innerHTML = '';
+  vSources.forEach(s => {
+    if(!seen[s.group]) {
+      seen[s.group] = true;
+      legend.innerHTML += `<div class="vleg"><div class="vleg-dot" style="background:${s.color}"></div>${s.group}</div>`;
+    }
+  });
+
+  if(!vInitialized) {
+    canvas.addEventListener('mousedown', e => { vDragging=true; vLastX=e.clientX; vLastY=e.clientY; canvas.classList.add('dragging'); });
+    window.addEventListener('mouseup', () => { vDragging=false; canvas.classList.remove('dragging'); });
+    window.addEventListener('mousemove', e => {
+      if(vDragging) {
+        vRotY += (e.clientX-vLastX)*0.5;
+        vRotX += (e.clientY-vLastY)*0.5;
+        vRotX = Math.max(-90,Math.min(90,vRotX));
+        vLastX=e.clientX; vLastY=e.clientY;
+        drawViz();
+      }
+      const rect=canvas.getBoundingClientRect();
+      const mx=(e.clientX-rect.left)*(canvas.width/rect.width);
+      const my=(e.clientY-rect.top)*(canvas.height/rect.height);
+      let best=null,bd=Infinity;
+      vSources.forEach(s=>{const p=vProject(s.x,s.y,s.z);const d=Math.hypot(p.sx-mx,p.sy-my);if(d<bd){bd=d;best=s;}});
+      vHovered = bd<20?best:null;
+      const tt=document.getElementById('viz-tooltip');
+      if(vHovered) {
+        tt.style.display='block';
+        tt.style.left=Math.min(e.clientX-rect.left+12, canvas.width-180)+'px';
+        tt.style.top=Math.max(e.clientY-rect.top-10,4)+'px';
+        tt.innerHTML=`<div class="vtt-name" style="color:${vHovered.color}">${vHovered.name}</div>
+          <div class="vtt-row"><span>Group</span><span class="vtt-val">${vHovered.group}</span></div>
+          <div class="vtt-row"><span>X; Y; Z</span><span class="vtt-val">${vHovered.x}; ${vHovered.y}; ${vHovered.z} m</span></div>
+          <div class="vtt-row"><span>Azimuth</span><span class="vtt-val">${vHovered.az}°</span></div>
+          <div class="vtt-row"><span>Weight</span><span class="vtt-val">${vHovered.w} kg</span></div>
+          <div class="vtt-row"><span>Enc.</span><span class="vtt-val">${vHovered.encCount}</span></div>`;
+      } else { tt.style.display='none'; }
+      drawViz();
+    });
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      vZoom *= e.deltaY<0?1.1:0.9;
+      vZoom = Math.max(0.5,Math.min(40,vZoom));
+      drawViz();
+    },{passive:false});
+    // Touch
+    let vLastTouches=[];
+    canvas.addEventListener('touchstart',e=>{vLastTouches=[...e.touches];if(e.touches.length===1){vDragging=true;vLastX=e.touches[0].clientX;vLastY=e.touches[0].clientY;}});
+    canvas.addEventListener('touchend',()=>{vDragging=false;vLastTouches=[];});
+    canvas.addEventListener('touchmove',e=>{
+      e.preventDefault();
+      if(e.touches.length===1&&vDragging){
+        vRotY+=(e.touches[0].clientX-vLastX)*0.5;
+        vRotX+=(e.touches[0].clientY-vLastY)*0.5;
+        vRotX=Math.max(-90,Math.min(90,vRotX));
+        vLastX=e.touches[0].clientX;vLastY=e.touches[0].clientY;
+        drawViz();
+      } else if(e.touches.length===2&&vLastTouches.length===2){
+        const d0=Math.hypot(vLastTouches[0].clientX-vLastTouches[1].clientX,vLastTouches[0].clientY-vLastTouches[1].clientY);
+        const d1=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        vZoom*=d1/d0; vZoom=Math.max(0.5,Math.min(40,vZoom));
+        vLastTouches=[...e.touches]; drawViz();
+      }
+    },{passive:false});
+    vInitialized=true;
+  }
+  drawViz();
+}
+
+function vProject(x,y,z) {
+  const rx=vRotX*Math.PI/180, ry=vRotY*Math.PI/180;
+  const x1=x*Math.cos(ry)+y*Math.sin(ry);
+  const y1=y*Math.cos(ry)-x*Math.sin(ry);
+  const y2=y1*Math.cos(rx)-z*Math.sin(rx);
+  const z2=z*Math.cos(rx)+y1*Math.sin(rx);
+  const canvas=document.getElementById('viz-canvas');
+  return{sx:canvas.width/2+x1*vZoom, sy:canvas.height/2-y2*vZoom, depth:z2};
+}
+
+function setVizView(v) {
+  if(v==='top')   {vRotX=-90;vRotY=0;vZoom=3;}
+  if(v==='front') {vRotX=0;vRotY=0;vZoom=4;}
+  if(v==='side')  {vRotX=0;vRotY=90;vZoom=4;}
+  if(v==='3d')    {vRotX=-35;vRotY=20;vZoom=3.5;}
+  document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));
+  document.getElementById('vb-'+v).classList.add('on');
+  drawViz();
+}
+
+function drawViz() {
+  const canvas=document.getElementById('viz-canvas');
+  if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0a0a0a'; ctx.fillRect(0,0,W,H);
+
+  // Grid
+  ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=0.5;
+  for(let i=-100;i<=100;i+=10){
+    const a=vProject(i,-10,0),b=vProject(i,120,0);
+    ctx.beginPath();ctx.moveTo(a.sx,a.sy);ctx.lineTo(b.sx,b.sy);ctx.stroke();
+    const cc=vProject(-60,i,0),d=vProject(60,i,0);
+    ctx.beginPath();ctx.moveTo(cc.sx,cc.sy);ctx.lineTo(d.sx,d.sy);ctx.stroke();
+  }
+  // Stage box
+  ctx.strokeStyle='#2a2a2a';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+  const s1=vProject(-30,0,0),s2=vProject(30,0,0),s3=vProject(30,12,0),s4=vProject(-30,12,0);
+  ctx.beginPath();ctx.moveTo(s1.sx,s1.sy);ctx.lineTo(s2.sx,s2.sy);ctx.lineTo(s3.sx,s3.sy);ctx.lineTo(s4.sx,s4.sy);ctx.closePath();ctx.stroke();
+  ctx.setLineDash([]);
+  // Axes
+  const o=vProject(0,0,0),ax=vProject(15,0,0),ay=vProject(0,15,0),az=vProject(0,0,15);
+  ctx.strokeStyle='#e05555';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(o.sx,o.sy);ctx.lineTo(ax.sx,ax.sy);ctx.stroke();
+  ctx.strokeStyle='#4ecb71';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(o.sx,o.sy);ctx.lineTo(ay.sx,ay.sy);ctx.stroke();
+  ctx.strokeStyle='#4a9eff';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(o.sx,o.sy);ctx.lineTo(az.sx,az.sy);ctx.stroke();
+  ctx.font='9px IBM Plex Mono,monospace';
+  ctx.fillStyle='#e05555';ctx.fillText('X',ax.sx+2,ax.sy);
+  ctx.fillStyle='#4ecb71';ctx.fillText('Y',ay.sx+2,ay.sy);
+  ctx.fillStyle='#4a9eff';ctx.fillText('Z',az.sx+2,az.sy);
+
+  // Sort by depth
+  const sorted=vSources.map(s=>{const p=vProject(s.x,s.y,s.z);return{...s,...p};}).sort((a,b)=>a.depth-b.depth);
+
+  sorted.forEach(s=>{
+    const r=Math.max(3,Math.min(10,Math.sqrt(s.encCount)*2));
+    const isH=vHovered&&vHovered.name===s.name;
+    // Drop line
+    if(s.z>2){
+      const fl=vProject(s.x,s.y,0);
+      ctx.strokeStyle='#222';ctx.lineWidth=0.5;ctx.setLineDash([2,3]);
+      ctx.beginPath();ctx.moveTo(s.sx,s.sy);ctx.lineTo(fl.sx,fl.sy);ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Azimuth arrow
+    if(s.az!==0){
+      const azRad=(s.az+vRotY)*Math.PI/180;
+      ctx.strokeStyle=s.color+'66';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(s.sx,s.sy);
+      ctx.lineTo(s.sx+Math.sin(azRad)*(r+10),s.sy-Math.cos(azRad)*(r+10));
+      ctx.stroke();
+    }
+    // Dot
+    ctx.beginPath();ctx.arc(s.sx,s.sy,isH?r+3:r,0,Math.PI*2);
+    ctx.fillStyle=isH?s.color:s.color+'cc';ctx.fill();
+    if(isH){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();}
+    // Label
+    if(isH||r>6){
+      ctx.fillStyle=isH?'#fff':s.color+'99';
+      ctx.font=`${isH?10:8}px IBM Plex Mono,monospace`;
+      ctx.textAlign='left';
+      ctx.fillText(s.name,s.sx+r+3,s.sy+3);
+    }
+  });
+}
+
+
+// ─── PACKING LIST ────────────────────────
+function renderPacking() {
+  if(!project) return;
+  const body = document.getElementById('packBody');
+
+  // Count all enclosures by type
+  const encMap = {};   // type -> {count, sources:[]}
+  const frameMap = {}; // bumper -> count
+
+  let totalWeight = 0;
+  let totalEnc = 0;
+
+  for(const g of project.groups) {
+    for(const s of g.sources) {
+      const pc = s.physConfig;
+      // Enclosures
+      for(const enc of (s.enclosures||[])) {
+        const t = (enc.type || '—').replace(/_C$/i, '');
+        if(!encMap[t]) encMap[t] = {count:0, groups:new Set()};
+        encMap[t].count++;
+        encMap[t].groups.add(g.name);
+        totalEnc++;
+      }
+      // Bumpers / frames
+      if(pc.bumper) {
+        const b = pc.bumper.trim();
+        frameMap[b] = (frameMap[b]||0) + 1;
+      }
+
+      // Weight
+      totalWeight += pc.totalWeightFull || 0;
+    }
+  }
+
+  // Sort enclosures by count desc
+  const encRows = Object.entries(encMap).sort((a,b)=>b[1].count-a[1].count);
+  const frameRows = Object.entries(frameMap).sort((a,b)=>b[1]-a[1]);
+
+  const totalWeightStr = totalWeight > 0 ? Math.round(totalWeight).toLocaleString() + ' kg' : '—';
+
+  body.innerHTML = `
+    <div style="display:flex;gap:8px;padding:10px 12px 0;flex-wrap:wrap">
+      ${packStat(totalEnc,'Total enclosures')}
+      ${packStat(project.totalSources,'Total sources')}
+
+      ${packStat(totalWeightStr,'Total weight')}
+    </div>
+
+    <div style="padding:10px 14px 4px;font-size:10px;font-family:var(--mono);color:var(--t3);letter-spacing:.12em;text-transform:uppercase">Enclosures</div>
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono)">
+      <thead>
+        <tr style="background:var(--bg1);border-bottom:0.5px solid var(--border)">
+          <th style="text-align:left;padding:7px 14px;font-size:9px;color:var(--t3);letter-spacing:.1em;font-weight:500">TYPE</th>
+          <th style="text-align:right;padding:7px 14px;font-size:9px;color:var(--t3);letter-spacing:.1em;font-weight:500">QTY</th>
+          <th style="text-align:left;padding:7px 14px;font-size:9px;color:var(--t3);letter-spacing:.1em;font-weight:500">USED IN</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${encRows.map(([type,info])=>`
+          <tr style="border-bottom:0.5px solid var(--border)">
+            <td style="padding:9px 14px;font-size:13px;font-weight:500;color:var(--t1)">${esc(type)}</td>
+            <td style="padding:9px 14px;font-size:16px;font-weight:600;color:var(--blue);text-align:right">${info.count}</td>
+            <td style="padding:9px 14px;font-size:10px;color:var(--t3)">${[...info.groups].join(', ')}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+
+    ${frameRows.length ? `
+    <div style="padding:14px 14px 4px;font-size:10px;font-family:var(--mono);color:var(--t3);letter-spacing:.12em;text-transform:uppercase">Bumpers / frames</div>
+    <table style="width:100%;border-collapse:collapse;font-family:var(--mono)">
+      <thead>
+        <tr style="background:var(--bg1);border-bottom:0.5px solid var(--border)">
+          <th style="text-align:left;padding:7px 14px;font-size:9px;color:var(--t3);letter-spacing:.1em;font-weight:500">ITEM</th>
+          <th style="text-align:right;padding:7px 14px;font-size:9px;color:var(--t3);letter-spacing:.1em;font-weight:500">QTY</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${frameRows.map(([item,qty])=>`
+          <tr style="border-bottom:0.5px solid var(--border)">
+            <td style="padding:9px 14px;font-size:12px;color:var(--t1)">${esc(item)}</td>
+            <td style="padding:9px 14px;font-size:16px;font-weight:600;color:var(--at);text-align:right">${qty}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>` : ''}
+
+    <div style="height:60px"></div>
+  `;
+}
+
+function packStat(val, label) {
+  return `<div style="flex:1;min-width:70px;background:var(--bg2);border-radius:8px;padding:8px 10px;text-align:center">
+    <div style="font-size:16px;font-weight:600;color:var(--t1);font-family:var(--mono);line-height:1">${val}</div>
+    <div style="font-size:9px;color:var(--t3);margin-top:3px;text-transform:uppercase;letter-spacing:.06em">${label}</div>
+  </div>`;
 }
 
 // ─── UTILS ──────────────────────────────
