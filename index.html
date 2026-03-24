@@ -343,10 +343,43 @@ body{background:var(--bg0);color:var(--t1);font-family:var(--sans);min-height:10
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-let project=null, activeFilter='all';
+let project=null, activeFilter='all', rawPages=[];
+let vRotX=30, vRotY=30, vZoom=3.5;
+let vDragging=false, vLastX=0, vLastY=0;
+let vHovered=null, vInitialized=false;
+let vSources=[];
 
 // ─── NAV ───────────────────────────────
+
+function resetApp() {
+  project = null;
+  activeFilter = 'all';
+  vInitialized = false;
+  vSources = [];
+  vHovered = null;
+  rawPages = [];
+  try {
+    const sl = document.getElementById('sourceList');
+    if(sl) sl.innerHTML = '';
+    const ds = document.getElementById('dashSearch');
+    if(ds) ds.value = '';
+    const ft = document.getElementById('ftabs');
+    if(ft) ft.innerHTML = '';
+    const fi = document.getElementById('fileIn');
+    if(fi) fi.value = '';
+    // Switch tab safely
+    const lp = document.getElementById('list-panel');
+    const vp = document.getElementById('viz-panel');
+    const pp = document.getElementById('pack-panel');
+    if(lp) { lp.classList.add('active'); }
+    if(vp) { vp.classList.remove('active'); }
+    if(pp) { pp.classList.remove('active'); }
+    document.querySelectorAll('.view-tab').forEach((t,i) => t.classList.toggle('active', i===0));
+  } catch(e) {}
+}
+
 function showScreen(id){
+  if(id==='screen-upload') resetApp();
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
 }
@@ -354,6 +387,7 @@ function showScreen(id){
 // ─── FILE INPUT ─────────────────────────
 function handleFile(input){
   const f=input.files[0]; if(!f)return;
+  vInitialized=false; vSources=[]; project=null;
   document.getElementById('pFile').textContent=f.name;
   showScreen('screen-parsing');
   parsePDF(f);
@@ -870,6 +904,9 @@ function switchTab(tab) {
   if(tab==='pack') renderPacking();
 }
 
+
+
+
 // ─── VISUALIZER ──────────────────────────
 const GROUP_COLORS = {
   'MAIN':'#4a9eff','CENTRE':'#ff77aa','SIDE':'#44ddff','REAR':'#ff8844',
@@ -878,26 +915,26 @@ const GROUP_COLORS = {
   'FLOWN SUBS':'#22cc88'
 };
 function groupColor(name) {
+  const n = name.toUpperCase();
   for(const [k,v] of Object.entries(GROUP_COLORS)) {
-    if(name.toUpperCase().includes(k)) return v;
+    if(n.includes(k)) return v;
   }
-  return '#888';
+  return '#888888';
 }
 
-let vRotX=30, vRotY=30, vZoom=3.5;
-let vDragging=false, vLastX=0, vLastY=0;
-let vHovered=null, vInitialized=false;
-let vSources=[];
 
 function initViz() {
   if(!project || !project.groups) return;
-  if(!vInitialized) { document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on')); const b3d=document.getElementById('vb-3d'); if(b3d) b3d.classList.add('on'); }
+  if(!vInitialized) {
+    document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));
+    const b3d=document.getElementById('vb-3d');
+    if(b3d) b3d.classList.add('on');
+  }
   const canvas = document.getElementById('viz-canvas');
   const wrap = document.getElementById('viz-canvas-wrap');
   canvas.width = wrap.offsetWidth || 360;
-  canvas.height = Math.max(wrap.offsetHeight, 300) || 300;
+  canvas.height = Math.max(wrap.offsetHeight, 300);
 
-  // Build source list from parsed project
   vSources = [];
   for(const g of project.groups) {
     for(const s of g.sources) {
@@ -917,7 +954,6 @@ function initViz() {
     }
   }
 
-  // Build legend
   const legend = document.getElementById('viz-legend');
   const seen = {};
   legend.innerHTML = '';
@@ -965,7 +1001,6 @@ function initViz() {
       vZoom = Math.max(0.5,Math.min(40,vZoom));
       drawViz();
     },{passive:false});
-    // Touch
     let vLastTouches=[];
     canvas.addEventListener('touchstart',e=>{vLastTouches=[...e.touches];if(e.touches.length===1){vDragging=true;vLastX=e.touches[0].clientX;vLastY=e.touches[0].clientY;}});
     canvas.addEventListener('touchend',()=>{vDragging=false;vLastTouches=[];});
@@ -1000,12 +1035,12 @@ function vProject(x,y,z) {
 }
 
 function setVizView(v) {
+  document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));
+  document.getElementById('vb-'+v).classList.add('on');
   if(v==='top')   {vRotX=90;vRotY=0;vZoom=3;}
   if(v==='front') {vRotX=0;vRotY=0;vZoom=4;}
   if(v==='side')  {vRotX=0;vRotY=90;vZoom=4;}
   if(v==='3d')    {vRotX=30;vRotY=30;vZoom=3.5;}
-  document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));
-  document.getElementById('vb-'+v).classList.add('on');
   drawViz();
 }
 
@@ -1017,7 +1052,6 @@ function drawViz() {
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#0a0a0a'; ctx.fillRect(0,0,W,H);
 
-  // Grid
   ctx.strokeStyle='#1a1a1a'; ctx.lineWidth=0.5;
   for(let i=-100;i<=100;i+=10){
     const a=vProject(i,-10,0),b=vProject(i,120,0);
@@ -1025,12 +1059,10 @@ function drawViz() {
     const cc=vProject(-60,i,0),d=vProject(60,i,0);
     ctx.beginPath();ctx.moveTo(cc.sx,cc.sy);ctx.lineTo(d.sx,d.sy);ctx.stroke();
   }
-  // Stage box
   ctx.strokeStyle='#2a2a2a';ctx.lineWidth=1;ctx.setLineDash([4,4]);
   const s1=vProject(-30,0,0),s2=vProject(30,0,0),s3=vProject(30,12,0),s4=vProject(-30,12,0);
   ctx.beginPath();ctx.moveTo(s1.sx,s1.sy);ctx.lineTo(s2.sx,s2.sy);ctx.lineTo(s3.sx,s3.sy);ctx.lineTo(s4.sx,s4.sy);ctx.closePath();ctx.stroke();
   ctx.setLineDash([]);
-  // Axes
   const o=vProject(0,0,0),ax=vProject(15,0,0),ay=vProject(0,15,0),az=vProject(0,0,15);
   ctx.strokeStyle='#e05555';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(o.sx,o.sy);ctx.lineTo(ax.sx,ax.sy);ctx.stroke();
   ctx.strokeStyle='#4ecb71';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(o.sx,o.sy);ctx.lineTo(ay.sx,ay.sy);ctx.stroke();
@@ -1040,20 +1072,17 @@ function drawViz() {
   ctx.fillStyle='#4ecb71';ctx.fillText('Y',ay.sx+2,ay.sy);
   ctx.fillStyle='#4a9eff';ctx.fillText('Z',az.sx+2,az.sy);
 
-  // Sort by depth
   const sorted=vSources.map(s=>{const p=vProject(s.x,s.y,s.z);return{...s,...p};}).sort((a,b)=>a.depth-b.depth);
 
   sorted.forEach(s=>{
     const r=Math.max(3,Math.min(10,Math.sqrt(s.encCount)*2));
     const isH=vHovered&&vHovered.name===s.name;
-    // Drop line
     if(s.z>2){
       const fl=vProject(s.x,s.y,0);
       ctx.strokeStyle='#222';ctx.lineWidth=0.5;ctx.setLineDash([2,3]);
       ctx.beginPath();ctx.moveTo(s.sx,s.sy);ctx.lineTo(fl.sx,fl.sy);ctx.stroke();
       ctx.setLineDash([]);
     }
-    // Azimuth arrow
     if(s.az!==0){
       const azRad=(s.az+vRotY)*Math.PI/180;
       ctx.strokeStyle=s.color+'66';ctx.lineWidth=1;
@@ -1061,11 +1090,9 @@ function drawViz() {
       ctx.lineTo(s.sx+Math.sin(azRad)*(r+10),s.sy-Math.cos(azRad)*(r+10));
       ctx.stroke();
     }
-    // Dot
     ctx.beginPath();ctx.arc(s.sx,s.sy,isH?r+3:r,0,Math.PI*2);
     ctx.fillStyle=isH?s.color:s.color+'cc';ctx.fill();
     if(isH){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();}
-    // Label
     if(isH||r>6){
       ctx.fillStyle=isH?'#fff':s.color+'99';
       ctx.font=`${isH?10:8}px IBM Plex Mono,monospace`;
@@ -1074,7 +1101,6 @@ function drawViz() {
     }
   });
 }
-
 
 // ─── PACKING LIST ────────────────────────
 function renderPacking() {
