@@ -329,9 +329,9 @@ body{background:var(--bg0);color:var(--t1);font-family:var(--sans);min-height:10
           <th>Type</th>
           <th class="r">Angle °</th>
           <th class="r">Site °</th>
-          <th class="r">Top Z</th>
-          <th class="r">Bot Z</th>
-          <th>Panflex</th>
+          <th class="r">Top Z (m)</th>
+          <th class="r">Bot Z (m)</th>
+          <th style="min-width:90px">Panflex</th>
         </tr>
       </thead>
       <tbody id="encBody"></tbody>
@@ -594,42 +594,114 @@ function parseGroups(lines){
 //  "#15 K2 5 -24.5 9.83 9.5 55/55"   → with panflex
 //  "C1 #1 KS28 0 0.55 0"             → stacked subs
 function parseEncRow(t, pg){
-  // Standard flown array row: #N TYPE [ANGLE] SITE TOPZ [BOTZ] [PANFLEX]
-  let m=t.match(/^#(\d+)\s+([A-Z0-9_\-]+(?:\s+II)?)\s+([-\d.]+)\s+([-\d.]+)\s+([\d.]+)(?:\s+([\d.]+))?(?:\s+(\d+\/\d+))?/i);
-  if(m){
-    return{
-      num:parseInt(m[1]),
-      type:m[2].trim().toUpperCase(),
-      angle:parseFloat(m[3]),
-      site:parseFloat(m[4]),
-      topZ:parseFloat(m[5]),
-      botZ:m[6]!=null?parseFloat(m[6]):null,
-      panflex:m[7]||null,
-      page:pg
-    };
+  t = t.strip ? t.strip() : t.trim();
+
+  // All Soundvision enclosure rows start with "#N " or "CN #N "
+  // Strategy: parse by token position, not by model name regex
+  // This way any model name works: "A10 FOCUS", "L2", "SB28m", anything
+
+  // Strip optional "C1 " prefix for stacked arrays
+  let line = t.replace(/^C\d+\s+/, '');
+  if(!/^#\d+\s+/.test(line)) return null;
+
+  // Extract enclosure number
+  const encNumMatch = line.match(/^#(\d+)\s+/);
+  if(!encNumMatch) return null;
+  const num = parseInt(encNumMatch[1]);
+  line = line.slice(encNumMatch[0].length); // strip "#N "
+
+  // Now split remaining into tokens
+  // The type can be multi-word (e.g. "KARA II", "A10 FOCUS")
+  // Numbers follow after the type name
+  // Strategy: scan tokens left to right, accumulate type until we hit numbers
+  const tokens = line.trim().split(/\s+/);
+
+  let typeParts = [];
+  let numberTokens = [];
+  let pipeSection = '';
+  let inNumbers = false;
+
+  for(let i = 0; i < tokens.length; i++){
+    const tok = tokens[i];
+    // Pipe-separated panflex group like "35/35" "|" "55/55" "|" ...
+    if(tok === '|') {
+      // Collect the rest as pipe panflex
+      const pfParts = [];
+      // grab already collected number tokens that look like panflex
+      // and all remaining
+      let j = i;
+      while(j < tokens.length){
+        if(tokens[j] !== '|') pfParts.push(tokens[j]);
+        j++;
+      }
+      // Remove last numeric tokens from numberTokens if they look like panflex
+      // and merge into pipe section
+      const lastNum = numberTokens[numberTokens.length-1];
+      if(lastNum && /^\d+\/\d+$/.test(lastNum)){
+        pfParts.unshift(numberTokens.pop());
+      }
+      pipeSection = pfParts.filter(p => p!=='|').join('|');
+      break;
+    }
+    // Is this token a number (possibly with decimal or negative)?
+    if(!inNumbers && /^-?[\d]+(\.\d+)?$/.test(tok)){
+      inNumbers = true;
+    }
+    if(inNumbers){
+      numberTokens.push(tok);
+    } else {
+      typeParts.push(tok);
+    }
   }
-  // Stacked array row: "C1 #1 KS28 0 0.55 0" or "#1 KS28 0 0.55 0"
-  m=t.match(/^(?:C\d+\s+)?#(\d+)\s+([A-Z0-9_\-]+)\s+([-\d.]+)\s+([\d.]+)\s+([\d.]+)/i);
-  if(m){
-    return{
-      num:parseInt(m[1]),
-      type:m[2].trim().toUpperCase(),
-      angle:null,
-      site:parseFloat(m[3]),
-      topZ:parseFloat(m[4]),
-      botZ:parseFloat(m[5]),
-      panflex:null,
-      page:pg
-    };
+
+  const type = typeParts.join(' ').toUpperCase().trim();
+  if(!type) return null;
+
+  // Parse numeric tokens: angle?, site, topZ, botZ?, panflex?
+  // Determine if last token(s) are panflex
+  function isPF(s){ return /^(\d+\/\d+(\|\d+\/\d+)*)$/.test(s); }
+
+  let panflex = pipeSection || null;
+  // Check last numberToken for inline panflex (e.g. "55/55")
+  if(!panflex && numberTokens.length > 0 && isPF(numberTokens[numberTokens.length-1])){
+    panflex = numberTokens.pop();
   }
-  return null;
+
+  const nums = numberTokens.map(parseFloat).filter(n => !isNaN(n));
+
+  let angle=null, site=null, topZ=null, botZ=null;
+
+  if(nums.length === 1){ topZ=nums[0]; }
+  else if(nums.length === 2){ topZ=nums[0]; botZ=nums[1]; }
+  else if(nums.length === 3){
+    // Could be: site, topZ, botZ (L-series no angle)
+    // or: angle, site, topZ (K1-SB style)
+    // Heuristic: if first value is small integer-like (0, -4.5, 0.4), it's site or angle
+    // L-series: 3 nums = site, topZ, botZ
+    if(type.startsWith('L2')){
+      site=nums[0]; topZ=nums[1]; botZ=nums[2];
+    } else {
+      angle=nums[0]; site=nums[1]; topZ=nums[2];
+    }
+  }
+  else if(nums.length >= 4){
+    angle=nums[0]; site=nums[1]; topZ=nums[2]; botZ=nums[3];
+  }
+
+  // Stacked arrays (KS28 etc.) have site, topZ, botZ — no angle
+  if(angle===null && nums.length===3 && !type.startsWith('L2')){
+    site=nums[0]; topZ=nums[1]; botZ=nums[2];
+  }
+
+  return { num, type, angle, site, topZ, botZ, panflex, page: pg };
 }
+
 
 // ─── CLASSIFY GROUP TYPE ─────────────────
 function classifyType(groupName, sourceName){
   const n=(groupName+' '+sourceName).toLowerCase();
   if(/\bsub\b|ks28|ground.sub|flown.sub/.test(n)) return 'sub';
-  if(/\bff\b|front.?fill|outfill/.test(n)) return 'fill';
+  if(/\bff\b|front.?fill|outfill|a10/.test(n)) return 'fill';
   if(/\bdelay\b/.test(n)) return 'delay';
   if(/\brear\b/.test(n)) return 'rear';
   if(/\bside\b/.test(n)) return 'side';
@@ -780,7 +852,7 @@ function openSourceByIdx(idx){
       <td class="site">${e.site!=null?e.site+'°':'—'}</td>
       <td class="r">${e.topZ!=null?e.topZ:''}</td>
       <td class="r">${e.botZ!=null?e.botZ:'—'}</td>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--gt);">${e.panflex||''}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--gt);">${formatPanflex(e.panflex)}</td>
     </tr>`;
   }).join('');
 
@@ -812,7 +884,7 @@ function groupColor(name) {
   return '#888';
 }
 
-let vRotX=35, vRotY=20, vZoom=3.5;
+let vRotX=30, vRotY=30, vZoom=3.5;
 let vDragging=false, vLastX=0, vLastY=0;
 let vHovered=null, vInitialized=false;
 let vSources=[];
@@ -918,20 +990,20 @@ function initViz() {
 }
 
 function vProject(x,y,z) {
-  const rx=vRotX*Math.PI/180, ry=vRotY*Math.PI/180;
-  const x1=x*Math.cos(ry)+y*Math.sin(ry);
-  const y1=y*Math.cos(ry)-x*Math.sin(ry);
-  const y2=y1*Math.cos(rx)-z*Math.sin(rx);
-  const z2=z*Math.cos(rx)+y1*Math.sin(rx);
+  const a=vRotY*Math.PI/180, e=vRotX*Math.PI/180;
+  const sx=(x*Math.cos(a)+y*Math.sin(a))*vZoom;
+  const horiz=-x*Math.sin(a)+y*Math.cos(a);
+  const sy=-(horiz*Math.sin(e)+z*Math.cos(e))*vZoom;
+  const depth=horiz*Math.cos(e)-z*Math.sin(e);
   const canvas=document.getElementById('viz-canvas');
-  return{sx:canvas.width/2+x1*vZoom, sy:canvas.height/2-y2*vZoom, depth:z2};
+  return{sx:canvas.width/2+sx, sy:canvas.height/2+sy, depth};
 }
 
 function setVizView(v) {
-  if(v==='top')   {vRotX=-90;vRotY=0;vZoom=3;}
+  if(v==='top')   {vRotX=90;vRotY=0;vZoom=3;}
   if(v==='front') {vRotX=0;vRotY=0;vZoom=4;}
   if(v==='side')  {vRotX=0;vRotY=90;vZoom=4;}
-  if(v==='3d')    {vRotX=-35;vRotY=20;vZoom=3.5;}
+  if(v==='3d')    {vRotX=30;vRotY=30;vZoom=3.5;}
   document.querySelectorAll('.vbtn').forEach(b=>b.classList.remove('on'));
   document.getElementById('vb-'+v).classList.add('on');
   drawViz();
@@ -1101,6 +1173,22 @@ function packStat(val, label) {
 }
 
 // ─── UTILS ──────────────────────────────
+function formatPanflex(p){
+  if(!p) return '';
+  const parts = p.split('/');
+  if(parts.length === 4) {
+    return `<span style="font-family:var(--mono);font-size:10px;line-height:1.8;display:grid;grid-template-columns:1fr 1fr;gap:0 8px;min-width:72px">`+
+      `<span><span style="color:#444;font-size:8px">TL</span> <span style="color:var(--gt)">${parts[0]}</span></span>`+
+      `<span><span style="color:#444;font-size:8px">TR</span> <span style="color:var(--gt)">${parts[1]}</span></span>`+
+      `<span><span style="color:#444;font-size:8px">BL</span> <span style="color:var(--gt)">${parts[2]}</span></span>`+
+      `<span><span style="color:#444;font-size:8px">BR</span> <span style="color:var(--gt)">${parts[3]}</span></span>`+
+      `</span>`;
+  }
+  if(parts.length === 2) {
+    return `<span style="font-family:var(--mono);font-size:11px;color:var(--gt)">${parts[0]}<span style="color:#444">/</span>${parts[1]}</span>`;
+  }
+  return `<span style="font-family:var(--mono);font-size:11px;color:var(--gt)">${p}</span>`;
+}
 function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 </script>
 <div class="footer-brand"><span>Three Production</span> &nbsp;·&nbsp; 2026</div>
